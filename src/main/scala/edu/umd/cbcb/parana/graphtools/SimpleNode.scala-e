@@ -1,0 +1,4 @@
+package edu.umd.cbcb.nethist.graphtools
+
+class SimpleNode( val name: String, val id: Int ){ 
+}

@@ -1,0 +1,73 @@
+package edu.umd.cbcb.parana.io
+
+import scala.util.parsing.combinator._
+import scala.collection.mutable.{ Set => MSet, Map => MMap }
+import java.io.{ FileReader => JFileReader }
+
+import scalax.collection.mutable.{ Graph => MGraph }
+import scalax.collection.GraphPredef._
+
+import edu.umd.cbcb.parana.graphtools.SimpleNode
+
+
+// Holy crap!  Parser combinators are awesome!
+class ADJListParser[NodeType] extends JavaTokenParsers {
+  override def skipWhitespace = false
+
+  val anything : Parser[String] = """[\s\S&&[^\n]]+""".r
+  val anyPrintable : Parser[String] = """[\S&&[^#\n]]+""".r
+  val space : Parser[String] = """[ \t\x0B\f\r]+""".r
+  val number : Parser[String]  = """(?:[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)|[+-]?\d+""".r
+  val newline : Parser[String] = """\n""".r
+
+  def graph : Parser[ List[(String, List[String])] ] =
+    (
+      repsep((commentLine|nodeLine), newline)~opt(newline) ^^ { case x~n => x.collect{ case Some(x) => x } }
+    )
+
+  def nodeLine : Parser[ Option[ (String, List[String]) ] ] =
+    (
+      anyPrintable~space~repsep(anyPrintable,space)~opt(space)~opt(commentLine) ^^ { case f~s1~t~s2~c => Some( (f, t) ) }
+     |anyPrintable~opt(space)~opt(commentLine) ^^ { case f~s~c => Some( (f, List.empty[String]) ) }
+    )
+
+  def commentLine : Parser[ Option[ (String, List[String]) ] ] =
+    (
+     "#"~anything ^^ { case x => Option.empty[ (String, List[String]) ] }
+    )
+}
+
+/**
+* Read from the file named "filename", and yield nodes using
+* the node factory nfact and edges using the edge factory "efact".
+* The type of edges yielded by efact will determine the type of graph
+* i.e. directed vs. undirected
+*/
+class ADJListReader2[ NT, E[X] <: EdgeLikeIn[X] ](
+  filename: String,
+  nfact: (String,Int) => NT,
+  efact : (NT,NT) => E[NT] ) {
+
+    // We don't yet know if we'll read a graph correctly
+    var G = Option.empty[ MGraph[ NT, E ] ]
+
+    // Parse the adjacency list format
+    def parse : Option[ MGraph[ NT, E ] ] = {
+      val gparser = new ADJListParser
+      val res = gparser.parseAll(gparser.graph, new JFileReader(filename))
+
+      val nameMap = MMap.empty[String, NT]
+      val adjList = res.get
+
+      G =
+        Some( MGraph.from(
+          adjList.map{ case (s,tl) => nfact(s,0) } , // the nodes
+          adjList.flatMap{                           // the edges
+            case (s,tl) =>
+              tl.map{ t => efact( nfact(s,0), nfact(t,0) ) }
+          }
+        ))
+      G
+    }
+
+  }
