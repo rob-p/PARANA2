@@ -24,7 +24,7 @@ object PhylogenyUtils {
 			val nodeName = n.getName
 			// If this node was lost
 			if ( nodeName contains "LOST" ) {  
-				HashSet("LOST")	
+				HashSet.empty[String]//("LOST")	
 			} else {
 				HashSet( PhylogenyMethods.getSpecies(n) )
 			}

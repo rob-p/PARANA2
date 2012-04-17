@@ -19,7 +19,7 @@ object SolutionEnsemble {
 case class CostAction( cost: Double, act: String )
 case class ScoreCount( var score: Double, var count: BigInt )        
 
-type CountDictT = HashMap[Int, ArrayBuffer[(Double, BigInt)]]
+type CountDictT = HashMap[Int, ArrayBuffer[ScoreCount]]
 type DvsT = Tuple2[Double, ArrayBuffer[Int]]
 type SlnDictT = HashMap[Int, HashMap[Int, Derivation]]
 
@@ -155,7 +155,7 @@ def projectToReversedGraph[N <: Comparable[N]]( H: ForwardHypergraph[N] ) = {
         val h = e.head
         e.tail.foreach{ t =>
             // Add the *directed* edges
-            G.insertEdge(h,t,true)
+            G.insertEdge(t,h,true)
         }
     }
     println("G size = "+G.size+", G order = "+G.order)
@@ -360,6 +360,35 @@ def isLost(n: PhylogenyNode) = { n.getName.contains("LOST") }
     }
 
     println("|E(S)|"+slnSpaceGraph.size)
+
+    def vstr(vert: FlipKey[PhylogenyNode]) = { 
+        val uname = if ( isLost(vert.u) ) { vert.u.getName.replace( vert.u.getId.toString, ""  )} else { vert.u.getName }
+        val vname = if ( isLost(vert.v) ) { vert.v.getName.replace( vert.v.getId.toString, ""  )} else { vert.v.getName }
+        uname+"\t"+vname+"\t"+vert.f+"\t"+vert.r 
+    }
+    
+    /*
+    val fname = "HYPERGRAPH.txt"
+    val output: Output = Resource.fromFile(fname)
+    // This next example is the pattern most developers will likely be most comfortable with:
+    for{
+      // create a processor (signalling the start of a batch process)
+      processor <- output.outputProcessor
+      // create an output object from it
+      out = processor.asOutput
+    }{
+        val nedge = slnSpaceGraph.size
+        // write # of verts
+        out.write(nedge+"\n")
+        // for each vertex
+        (0 until nedge).foreach{ ei =>
+            val edge = slnSpaceGraph.edge(ei)
+            // write out the head vertex, weight, # tail nodes and tail nodes
+            out.write(vstr( slnSpaceGraph.vertex(edge.head) )+"\t"+edge.weight+"\t"+edge.tail.size+"\n")
+            out.write(edge.tail.map{ ti => vstr(slnSpaceGraph.vertex(ti)) }.mkString("\n")+"\n ")
+        }
+    }
+    */
     slnSpaceGraph
  }
 
@@ -434,6 +463,8 @@ def leafCostDict[N <: PhylogenyNode with Comparable[N]]( H: ForwardHypergraph[N]
         idToVertMap[ G[*v].idx ] = *v;
     }
     */
+    implicit def booleanToInt(x: Boolean) = if ( x ) { 1 } else { 0 }
+
     var nlost = 0
     var nef = 0
     var tweight = 0.0
@@ -446,8 +477,8 @@ def leafCostDict[N <: PhylogenyNode with Comparable[N]]( H: ForwardHypergraph[N]
         val nameV = v.getName
 
         // Check to see if u, v, or both have been lost
-        val lostU = isLost(u) || u.isInternal
-        val lostV = isLost(v) || v.isInternal
+        val lostU = isLost(u) || u.isInternal || !G.adjList.contains(u.getName)
+        val lostV = isLost(v) || v.isInternal || !G.adjList.contains(v.getName)
         /*
         auto endOfMap = idToVertMap.end();
         bool lostU = ( idToVertMap.find( nd.u() ) == endOfMap ) || ( ! contains(extantNodes, idToVertMap[nd.u()]) );
@@ -472,7 +503,7 @@ def leafCostDict[N <: PhylogenyNode with Comparable[N]]( H: ForwardHypergraph[N]
                 val w_r = if (d_r) { G.getWeight(v.getName, u.getName) } else { 0.0 }
                 val w = (w_f+w_r)
                 assert( w <= 2.0 )
-                tweight += (w)
+                tweight += (w) * (d_f + d_r) * (f + r)
                 if ( undirected ) { assert( w_f == w_r && f == r ) }
 
                 //auto costFlipProb = costDict[ make_tuple(f,r) ][ make_tuple(d_f,d_r) ];
@@ -496,7 +527,7 @@ def leafCostDict[N <: PhylogenyNode with Comparable[N]]( H: ForwardHypergraph[N]
             } else {
                 val hasSelfLoop = G.hasEdge(u.getName, v.getName, directed)
                 val w_l = if (hasSelfLoop) { G.getWeight(u.getName, v.getName) } else { 0.0 }
-                tweight += w_l
+                tweight += w_l * (hasSelfLoop) * (f + r)
                 //auto costFlipProb = selfLoopCostDict[ make_tuple(f,r) ][ hasSelfLoop ];
                 val costFlipProb = selfLoopCostFunDict( ((f,r), hasSelfLoop) )( w_l )
                 /*
@@ -525,43 +556,118 @@ def leafCostDict[N <: PhylogenyNode with Comparable[N]]( H: ForwardHypergraph[N]
     println("NUM EFFECTIVE EDGES ="+nef)
     println("TOTAL WEIGHT = "+tweight)
     println("TOTAL COST = "+tcost)
+    /*
+    val fname = "BASECASES.txt"
+    val output: Output = Resource.fromFile(fname)
+    // This next example is the pattern most developers will likely be most comfortable with:
+    for{
+      // create a processor (signalling the start of a batch process)
+      processor <- output.outputProcessor
+      // create an output object from it
+      out = processor.asOutput
+    }{
+        slnDict.foreach{ case(k,v) =>
+            val vert = H.vertex(k)
+            if (!(isLost(vert.u) || isLost(vert.v))) {
+                out.write(vert.u.getName+"\t"+vert.v.getName+"\t"+vert.f+"\t"+vert.r+"\t"+v(0).cost+"\n")
+            }
+        }
+    }
+    */
 }
 
+/** Get the next sln (from "Faster Cube Pruning" paper)
+*/
 def appendNext(
+    score: Double,
+    inds: Array[Int],
     sizes: ArrayBuffer[Int],
-    pq: PriorityQueue[(Double, ArrayBuffer[Int])],
-    //pqCompT& pqComp,
-    computeScore: (ArrayBuffer[Int]) => Double ): Boolean = {
+    pq: PriorityQueue[(Double, Array[Int])],
+    computeScore: (Array[Int]) => Double ): Boolean = {
 
-    if (pq.isEmpty) { return false }
-
-    val (score, inds) = pq.dequeue
-    
-    var (i,breakLoop) = (0,false)
-    while( i < inds.size && !breakLoop ) {
-        val newInds = inds.clone()//ArrayBuffer(inds :_* )
+    var i = 0
+    while( i < inds.size ){ 
+        val newInds = inds.clone()
         newInds(i) += 1
         if ( newInds(i) < sizes(i) ) {
             pq += (( computeScore(newInds), newInds )) 
         }
-
-        breakLoop = (inds(i) != 1)
+        if ( inds(i) != 0 ) { return true }
         i += 1
     }
 
     return true
 }
 
-def computeAlphasDouble( slnVec: ArrayBuffer[(Double, BigInt)], k: Int, total: BigInt ) = {
+def countEdgeSolutions( 
+    ecost: Double,
+    tailNodes: Array[Int],
+    countDict: CountDictT,
+    k: Int ) = {
+
+    // product pointers
+    val elemSizes = new ArrayBuffer[Int](tailNodes.size)
+    var cost = ecost
+    tailNodes.foreach{ t =>
+        elemSizes += countDict(t).size
+        cost += countDict(t).head.score
+    }
+    
+    import scala.collection.mutable.PriorityQueue
+    implicit val ord = Ordering.fromLessThan[(Double, Array[Int])]( (a,b) => a._1 > b._1 )
+    val pq = PriorityQueue( (cost, Array.fill(tailNodes.size)(0)) )
+
+    def computeScore( inds: Array[Int] ) = {
+        val numNodes = tailNodes.size
+        var cost = ecost
+        (0 until numNodes).foreach{ i=>
+            cost += countDict( tailNodes(i) )( inds(i) ).score
+        }
+        cost
+    }
+
+    val edgeSlns = new ArrayBuffer[ScoreCount](k)
+    val epsilon = 1e-5
+    var numClasses = 0
+
+    while ( pq.nonEmpty && numClasses <= k ) {
+        // Get the next best solution score from the top of the queue
+        val (cost, inds) = pq.dequeue
+
+        // Compute the number of ways we can obtain this solution
+        var numSlns = BigInt(1)
+        (0 until inds.size).foreach{ i =>
+            numSlns *= countDict( tailNodes(i) )( inds(i) ).count
+        }
+
+        // put this solution into our # sln dict
+        if ( edgeSlns.size == 0 || abs(cost - edgeSlns.last.score) > epsilon ) {
+            edgeSlns += ScoreCount(cost, numSlns)
+        } else { // we found a solution of this score
+            edgeSlns.last.count += numSlns
+        }
+
+        appendNext( cost, inds, elemSizes, pq, computeScore )
+        numClasses = edgeSlns.size
+    }
+
+    if (edgeSlns.size == k ){ 
+        edgeSlns.view(0, edgeSlns.size-1)
+    } else {
+        edgeSlns
+    }
+}
+
+def computeAlphasDouble( slnVec: ArrayBuffer[ScoreCount], k: Int, total: BigInt ) = {
     
     val scores = new ArrayBuffer[Double](slnVec.size)
-    val (bestScore, worstScore) = (slnVec.head._1, slnVec.last._1)
+    val (bestScore, worstScore) = (slnVec.head.score, slnVec.last.score)
     
     if ( bestScore == worstScore && slnVec.size() > 1 ) {
         println("bestScore ("+bestScore+") == worstScore ("+worstScore+")")
         println("=== slnVec ===")
         slnVec.foreach{ e =>
-            println("score = "+e._1+", count = "+e._2)
+            println("score = "+e.score+", count = "+e.count)
         }
         exit(-1)
     }
@@ -578,7 +684,7 @@ def computeAlphasDouble( slnVec: ArrayBuffer[(Double, BigInt)], k: Int, total: B
     var sum = 0.0
 
     slnVec.foreach{ e =>
-        val a = abs( bestScore - e._1 ) * scale 
+        val a = abs( bestScore - e.score ) * scale 
         val s = exp(-a)
         scores += s
         sum += s
@@ -594,66 +700,6 @@ def computeAlphasDouble( slnVec: ArrayBuffer[(Double, BigInt)], k: Int, total: B
 }
 
 
-def countEdgeSolutions( 
-    ecost: Double,
-    tailNodes: Array[Int],
-    countDict: CountDictT,
-    k: Int) = { 
-
-    // product pointers
-    //std::vector< size_t > prodElems(0, tailNodes.size());
-    val elemSizes = new ArrayBuffer[Int](tailNodes.size)
-    var cost = ecost
-    tailNodes.foreach{ t=>
-        elemSizes += countDict(t).size
-        cost += countDict(t).head._1
-    }
-    
-    import scala.collection.mutable.PriorityQueue
-    implicit val ord = Ordering.fromLessThan[(Double, ArrayBuffer[Int])]( (a,b) => a._1 > b._1 )
-    //QueueCmp ord;
-    val pq = PriorityQueue( (cost, ArrayBuffer.fill(tailNodes.size)(0)) )
-
-    def computeScore( inds: ArrayBuffer[Int] ) = {
-        val numNodes = tailNodes.size
-        var cost = ecost
-        (0 until numNodes).foreach{ i=>
-            cost += countDict( tailNodes(i) )( inds(i) )._1
-        }
-        cost
-    }
-
-    val edgeSlns = ArrayBuffer.empty[ScoreCount]
-    val epsilon = 1e-5
-    var numSln = 0
-
-    while ( !pq.isEmpty && numSln < k ) {
-        // Get the next best solution score from the top of the queue
-        var (cost, inds) = pq.head
-        // Compute the number of ways we can obtain this solution
-        var numSlns = BigInt(1)
-
-        (0 until inds.size).foreach{ i=>
-            numSlns *= countDict( tailNodes(i) )( inds(i) )._2
-        }
-
-        // put this solution into our # sln dict
-        val fp = edgeSlns.find( cc => abs(cost - cc.score) <= epsilon )
-        //if ( edgeSlns.size == 0 || abs(cost - edgeSlns.last.score) > epsilon ) {
-        if (fp.isEmpty) { // we didn't find a solution of this score
-            edgeSlns += ScoreCount(cost, numSlns)
-        } else { // we found a solution of this score
-            fp.get.count += numSlns
-            //edgeSlns.last.count += numSlns
-        }
-
-        appendNext( elemSizes, pq, computeScore )
-        numSln = edgeSlns.size
-    }
-    //println("numSln = "+numSln)
-    edgeSlns
-}
-
 def upDown( 
         H: ForwardHypergraph[PhylogenyNode],
         t: Phylogeny, 
@@ -666,17 +712,44 @@ def upDown(
         outputName: String, 
         outputKeys: ArrayBuffer[FlipKey[PhylogenyNode]] ) {
         
-
+        def vstr(vert: FlipKey[PhylogenyNode]) = { 
+            val uname = if ( isLost(vert.u) ) { vert.u.getName.replace( vert.u.getId.toString, ""  )} else { vert.u.getName }
+            val vname = if ( isLost(vert.v) ) { vert.v.getName.replace( vert.v.getId.toString, ""  )} else { vert.v.getName }
+            uname+"\t"+vname+"\t"+vert.f+"\t"+vert.r 
+        }
         // Compute the *weighted* probability of each edge being in
         // the top k distinct scoring solutions
         var costsum = 0.0
         // Each leaf has a single solution which is, by definition, of optimal cost
         order.foreach{ vit =>
-            if (H.incident(vit).size == 0) { 
-                countDict(vit) = ArrayBuffer( (( slnDict(vit)(0).cost, BigInt(1) )) )  
+            val vertex = H.vertex(vit)
+            if ( H.incident(vit).size == 0) { 
+                countDict.getOrElseUpdate(vit, ArrayBuffer.empty[ScoreCount]) += ScoreCount( slnDict(vit)(0).cost, BigInt(1) )
                 costsum += slnDict(vit)(0).cost
             }
         }
+        /*
+        val cdname = "CDICT.txt"
+        val cdout: Output = Resource.fromFile(cdname)
+        // This next example is the pattern most developers will likely be most comfortable with:
+        for{
+        // create a processor (signalling the start of a batch process)
+        processor <- cdout.outputProcessor
+        // create an output object from it
+        out = processor.asOutput
+        }{
+            out.write(countDict.size +"\n")
+            countDict.foreach{ case (vit, scarray) =>
+                val vert = H.vertex(vit)
+                out.write( vstr(vert) +"\t"+ scarray.size +"\n" )
+                scarray.foreach{ case ScoreCount(cost, num) =>
+                    out.write(cost +"\t"+ num +"\n" )
+                }
+            }
+        }
+        */
+        
+
         println("COSTSUM = "+costsum)
         println("ORDER SIZE = "+order.size)
         println("SIZE OF COUNT DICT = "+ countDict.size )
@@ -690,23 +763,40 @@ def upDown(
         // solution for each vertex
         val usedEdges = HashMap.empty[Int, HashMap[Double, HashSet[Int]]]
 
-        val N = H.order
+        val N = order.size()//H.order
+        println("# of vertices in order is "+N)
         var ctr = 0
-
+        /*
+    val oname = "EDGES.txt"
+    val oput: Output = Resource.fromFile(oname)
+    // This next example is the pattern most developers will likely be most comfortable with:
+    for{
+      // create a processor (signalling the start of a batch process)
+      processor <- oput.outputProcessor
+      // create an output object from it
+      out = processor.asOutput
+    }{
+    */
         // For each vertex, in topological order (up)
-        order.reverseIterator.foreach{ vit =>
+        /*var vnum = 0
+        val osize = order.size
+        while( vnum < osize ) {
+            val vit = order(vnum)
+            vnum +=1*/
+        order.foreach{ vit =>
             if ( ctr % 1000 == 0 || ctr == N-1 ) {
                 print("\r\r Processed "+100.0*(ctr.toFloat/N)+"% of the vertices")
             }
             
 
-            ctr += 1
             // Put the results in an ordered map -- the sorted
             // property will be useful later for maintaining only the
             // k-best score classes
-            
+            val vert = H.vertex(vit)
             var edgeCostMap = new java.util.TreeMap[Double, ArrayBuffer[(Int,BigInt)]]
-
+            //println("SLN FOR NODE "+vert)
+            //out.write( vstr(vert) +"\t")
+            var nedgesln = ArrayBuffer.empty[BigInt]
             // loop over all incoming edges and compute the # of
             // solutions over each edge as well as that solution's cost
             H.incident(vit).foreach{ e => 
@@ -714,110 +804,89 @@ def upDown(
                 val edge = H.edge(e)
                 val hind = edge.head
                 val w = edge.weight
-
-                val tvert = H.vertex(edge.tail(0))
+                //val tvert = H.vertex(edge.tail(0))
                 
-                val currentEdgeSlns = countEdgeSolutions( w, edge.tail, countDict, k )
+                //println( vstr(vert) +", edge "+e )
+                val printMe = false // ( vert.u.getName == "129064_Fr" )
+                val currentEdgeSlns = countEdgeSolutions( w, edge.tail, countDict, k)
+                //if ( printMe ) {
+                //    println("EDGE: "+e+" counts = "+currentEdgeSlns.map{ x => x.count}.mkString(", ") )
+                //}
+                //out.write(w+"\t"+currentEdgeSlns.size+"\t"+currentEdgeSlns.map{ case ScoreCount(s,c) => s+"\t"+c }.mkString("\t")+"\n")
+                nedgesln += currentEdgeSlns.map{ ec => ec.count }.sum           
+                if (ctr == N-1) { println(H.vertex(vit)); println(currentEdgeSlns) }
 
-                currentEdgeSlns.foreach{ sc =>
-                    val score = sc.score
-                    val count = sc.count                                        
+                currentEdgeSlns.foreach{ case ScoreCount(score, count) =>
                     val edgeContrib = (e, count)
-
-                    if ( !(edgeCostMap contains score) ) { //insertIt == edgeCostMap.end() ) {
-                        edgeCostMap( score ) = ArrayBuffer( edgeContrib )
-                    } else {
-                        edgeCostMap( score ) += edgeContrib
-                    }
-
-                    if ( edgeCountMap contains e ){
-                        edgeCountMap(e)(score) = count
-                    } else {
-                        edgeCountMap(e) = HashMap( score -> count )
-                    }
-
+                    edgeCostMap.getOrElseUpdate( score, ArrayBuffer.empty[(Int, BigInt)] ) += edgeContrib
+                    edgeCountMap.getOrElseUpdate( e, HashMap.empty[Double, BigInt] )(score) = count
                 }
             }
+            //out.write(nedgesln.sortWith{ (x,y) => x < y}.mkString("\t")+"\n")
+            //out.write(nedgesln + "\n")
             // If we traversed any edges
             if ( edgeCostMap.size > 0 ) {
                 type EdgeSlnT = Tuple3[Double, BigInt, Int]
                 var minCost = Double.PositiveInfinity
                 val mk = min( edgeCostMap.size, k )
-                var ctr = 0
+                var ectr = 0
 
                 // for all incoming score classes
                 val ecmIt = edgeCostMap.iterator
-                while( ecmIt.hasNext && ctr < mk ) {
+                while( ecmIt.hasNext && ectr < mk ) {
+
                     val (score, providingEdges) = ecmIt.next
-                
-                //edgeCostMap.foreach{
-                    // the score and set of edges providing this score
-                 //   case (score, providingEdges) =>
-                    ctr += 1
+                    
                     // minimum cost incoming score
                     minCost = min( minCost, score )
-                    // will count the number of solutions in this score 
-                    // clas
+
+                    // will count the number of solutions in this score class
                     var numSln = BigInt(0)
                 
                     // Update the information at the derived vertices
-                    providingEdges.foreach{ case (edgeInd, count) =>
+                    providingEdges.foreach{ 
+                        case (edgeInd, count) =>
                         // Add this edge to the set of used edges for
                         // the derived vertex for the given score class.
                         usedEdges.
                                   getOrElseUpdate(vit, HashMap(score -> HashSet.empty[Int])).
                                   getOrElseUpdate(score, HashSet.empty[Int]) += edgeInd
-                        /*
-                        if ( (usedEdges contains vit) && (usedEdges(vit) contains score) ) {
-                            usedEdges(vit)(score) += edgeInd
-                        } else {
-                            usedEdges(vit) = HashMap(score -> HashSet(edgeInd) )
-                        }
-                        */
+
                         // update the total number of solutions of the
                         // derived vertex
                         numSln += count
                     }
+                    if ( ctr == N-1 ) { println("Score = "+score+", providing edges = "+providingEdges+", numSln = "+numSln) }
+                    
                     // There are 'numSln' derivations yielding vit at
                     // a score of 'score'
-                    countDict.getOrElseUpdate(vit, ArrayBuffer.empty[(Double, BigInt)]) += (( score, numSln ))
-                    /*
-                    if ( countDict contains vit ) {
-                        countDict(vit) += (( score, numSln ))
-                    } else {
-                        countDict(vit) = ArrayBuffer( (score, numSln) )
-                    }*/ 
+                    countDict.getOrElseUpdate(vit, ArrayBuffer.empty[ScoreCount]) += ScoreCount( score, numSln )
 
                     // Now that we have a total count for the derived
                     // vertex, compute each edge's contribution
+                    /*var pec = 0
+                    val npe = providingEdges.size
+                    while( pec < npe ) {
+                        val (edgeInd, count) = providingEdges(pec)
+                        pec += 1
+                        */
                     providingEdges.foreach{ case (edgeInd, count) =>
                         val edgeProb = ( BigDecimal(count) / BigDecimal(numSln) ).doubleValue
                         // The probability of traversing this edge for
                         // derivations with the given score
                         edgeProbMap.getOrElseUpdate(edgeInd, HashMap.empty[Double, Double])(score) = edgeProb
-                        /*
-                        if ( edgeProbMap contains edgeInd ) {
-                            edgeProbMap(edgeInd)(score) = edgeProb
-                        } else {
-                            edgeProbMap(edgeInd) = HashMap( score -> edgeProb )
-                        }
-                        */
-                    }                    
+                    }    
+                    ectr += 1                
                 }
 
                 // Find the minimum cost edge
                 val fs = HashSet.empty[FlipT]
-                if ( (slnDict contains vit) && (slnDict(vit) contains 0) ){
-                    slnDict(vit)(0) = Derivation( minCost, 0, ArrayBuffer.empty[Int], fs)
-                } else {
-                    slnDict(vit) = HashMap( 0 -> Derivation( minCost, 0, ArrayBuffer.empty[Int], fs))
-                }
-
+                slnDict.getOrElseUpdate(vit, HashMap.empty[Int, Derivation])(0) = Derivation(minCost, 0, ArrayBuffer.empty[Int], fs)
             }
+            ctr += 1
         }
         // loop over verts
-        print("\n")
-
+//} // write to file
         type ProbMapT = HashMap[Int, Double]
         
         /*auto getOrElse = [] ( probMapT& pm, const size_t& key, double alt ) {
@@ -843,10 +912,23 @@ def upDown(
         H.addVertex( rootFlip )
         val rootIdNoFlip = H.index(rootKey)
         val rootIdFlip = H.index(rootFlip)
+        
+        println(countDict(rootInd))
+        /*
+        H.incident(rootIdNoFlip).foreach{ ei =>
+            edgeCountMap(ei).foreach{ case (score, count) =>
+                println("Edge "+ei+" has score "+score+" with count "+count)
+            }
+        }
+        */
 
         // Compute the probabilities (outside)
         // Loop over all vertices in reverse topological order
-        order.foreach{ vit =>
+        /*vnum = osize-1
+        while( vnum >= 0 ){
+            val vit = order(vnum)
+            vnum -= 1*/
+        order.reverseIterator.foreach{ vit =>
             print("\r\rprocessing node " + ctr + "/" + tot)
             ctr += 1 
             // The current vertex and it's probability
@@ -856,7 +938,7 @@ def upDown(
             // The total # of derivations of this vertex (over all
             // considered score classes)
             var total = BigInt(0)
-            (0 until countDict(vit).size).foreach{ i => total += countDict(vit)(i)._2 }
+            (0 until countDict(vit).size).foreach{ i => total += countDict(vit)(i).count }
 
             // Compute the weights for each of the score classes
             // considered at this node
@@ -865,7 +947,7 @@ def upDown(
             // for each top-k score class
             (0 until countDict(vit).size).foreach{ i =>
                 // The score and it's count
-                val (pScore, pCount) = countDict(vit)(i)
+                val ScoreCount(pScore, pCount) = countDict(vit)(i)
 
                 var tprob = 0.0
                 // for all incoming edges contributing to this score
@@ -915,7 +997,7 @@ def upDown(
         var i = 0
         
         countDict(rootInd).foreach{ sc =>
-            println("score class "+i+" has "+sc._2+" solutions of score  "+sc._1)
+            println("score class "+i+" has "+sc.count+" solutions of score  "+sc.score)
             i += 1
         }
 
@@ -924,12 +1006,14 @@ def upDown(
         val fname = outputName
         val output: Output = Resource.fromFile(fname)
         // This next example is the pattern most developers will likely be most comfortable with:
+        
         for{
           // create a processor (signalling the start of a batch process)
           processor <- output.outputProcessor
           // create an output object from it
           out = processor.asOutput
         }{
+            
           (0 until H.order).foreach { vid =>
           // all writes to out will be on the same open output stream/channel
             val key = H.vertex(vid)
