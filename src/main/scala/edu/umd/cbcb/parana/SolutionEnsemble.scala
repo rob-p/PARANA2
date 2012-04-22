@@ -627,7 +627,7 @@ def countEdgeSolutions(
     }
 
     val edgeSlns = new ArrayBuffer[ScoreCount](k)
-    val epsilon = 1e-5
+    val epsilon = 2.0
     var numClasses = 0
 
     while ( pq.nonEmpty && numClasses <= k ) {
@@ -964,10 +964,7 @@ def upDown(
                     val ft = flipType( H.vertex(vit), H.vertex(tail(0)) )
                     val outKey = keyForAction( H.vertex(vit), ft )
                     val outInd = H.index(outKey)
-                    var prob = outProbMap.getOrElse(outInd, 0.0)
-                    prob += ( parentProb * (alphas(i) * condProb))
-                    outProbMap(outInd) = prob
-                    
+                    outProbMap(outInd) =  outProbMap.getOrElse(outInd, 0.0) + ( parentProb * (alphas(i) * condProb))
                     //outProbMap(outInd) += ( parentProb * (alphas(i) * condProb))
 
                     // for all tail vertices of this edge
@@ -975,9 +972,7 @@ def upDown(
                         // For each vertex in the tail of e, it gets
                         // probability mass for deriving *vit
                         // proportional to e's contribution
-                        var prob = probMap.getOrElse(tind, 0.0)
-                        prob += (parentProb * ( alphas(i) * condProb ));
-                        probMap(tind) = prob
+                        probMap(tind) = probMap.getOrElse(tind, 0.0) + (parentProb * ( alphas(i) * condProb ))
                         //outProbMap[tind] += (parentProb * ( alphas[i] * condProb ));
                     }
                 }

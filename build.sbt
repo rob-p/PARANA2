@@ -25,13 +25,11 @@ resolvers ++= Seq(
 )
 
 libraryDependencies  ++= Seq(
-            // other dependencies here
-            // "jgrapht" % "jgrapht" % "0.8.2",
-            "com.nativelibs4java" % "scalacl" % "0.2",
-            "com.assembla.scala-incubator" %% "graph-core" % "1.4.2",
+        "com.nativelibs4java" % "scalacl" % "0.2",
+        "com.assembla.scala-incubator" %% "graph-core" % "1.4.2",
 	    "org.scalatest" %% "scalatest" % "1.6.1" % "test",
-        "com.github.scala-incubator.io" %% "scala-io-core" % "0.4-SNAPSHOT",
-	    "com.github.scala-incubator.io" %% "scala-io-core" % "0.4-SNAPSHOT",
+        "com.github.scala-incubator.io" %% "scala-io-core" % "0.4.0",
+	    "com.github.scala-incubator.io" %% "scala-io-file" % "0.4.0",
 	    "com.github.scopt" %% "scopt" % "1.1.2",
-            "net.robpatro" %% "scala-utils" % "1.0.0"
+        "net.robpatro" %% "scala-utils" % "1.0.0"
 )

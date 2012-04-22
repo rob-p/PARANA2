@@ -8,6 +8,9 @@ import org.forester.phylogeny.{ Phylogeny, PhylogenyMethods, PhylogenyNode }
 
 object PhylogenyUtils {
 
+	//val LostSet = HashSet("LOST")
+	val LostSet = HashSet.empty[String]
+
 	object TreeInfo {
 		def empty() = { new TreeInfo }
 	}
@@ -24,7 +27,7 @@ object PhylogenyUtils {
 			val nodeName = n.getName
 			// If this node was lost
 			if ( nodeName contains "LOST" ) {  
-				HashSet.empty[String]//("LOST")	
+				LostSet	
 			} else {
 				HashSet( PhylogenyMethods.getSpecies(n) )
 			}
